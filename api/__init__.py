@@ -79,7 +79,8 @@ class PanApiSession(OAuth2Session):
         
         # Calculate and store the expiry time
         self.token_expiry = datetime.datetime.utcnow() + datetime.timedelta(seconds=self.token['expires_in'])
-        logging.info(f"Token will expire at {self.token_expiry}")            
+        logging.info(f"Token will expire at {self.token_expiry}")    
+        logging.debug(f"Token:  {self.token['access_token']}")       
 
     def reauthenticate(self):
         logging.info("Reauthenticating session...")

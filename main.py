@@ -10,6 +10,8 @@ from api.palo_token import PaloToken
 from panos import PaloConfigManager
 import scm.obj as obj
 import argparse
+import json
+import sys
 
 def setup_logging():
     logger = logging.getLogger('')
@@ -64,24 +66,39 @@ def run_selected_objects(parsed_data, scm_obj_manager, folder_scope, device_grou
         logger.info(f"Processing object type: {obj_type_name}")
         scm_obj_manager.process_objects({obj_type_name: parsed_data[obj_type_name]}, folder_scope, device_group_name)
 
-def main(config, run_objects=None, run_security=False, run_nat=False, run_all=False):
+def main(config, run_objects=None, run_security=False, run_nat=False, run_all=False, json_file=""):
     try:
         start_time = time.time()
         logging.info(f"Script started at {time.ctime(start_time)}")
-
         api_session = PanApiHandler(initialize_api_session())
         configure = Processor(api_session, config.max_workers, obj)
+        if json_file == "":
+            # Load input from PANOS
+            xml_file_path = get_xml_file_path(config, logger)
 
-        xml_file_path = get_xml_file_path(config, logger)
-
-        parse = XMLParser(xml_file_path, None)
-        folder_scope, config_type, device_group_name = parse.parse_config_and_set_scope(xml_file_path)
-        logger.info(f'Current SCM Folder: {folder_scope}, PANOS: {config_type}, Device Group: {device_group_name}')
+            parse = XMLParser(xml_file_path, None)
         
-        parse.config_type = config_type
-        parse.device_group_name = device_group_name
-        parsed_data = parse.parse_all()
-        logger.debug(f"Parsed data keys: {list(parsed_data.keys())}")
+            folder_scope, config_type, device_group_name = parse.parse_config_and_set_scope(xml_file_path)
+            logger.info(f'Current SCM Folder: {folder_scope}, PANOS: {config_type}, Device Group: {device_group_name}')
+        
+            parse.config_type = config_type
+            parse.device_group_name = device_group_name
+            parsed_data = parse.parse_all()
+            logger.debug(f"Parse Data: {json.dumps(parsed_data,indent=4)}")
+            logger.debug(f"Parsed data keys: {list(parsed_data.keys())}")
+        
+        else:
+            confirm_folder = input('What folder do you want the objects/policies to end up in? \n Use All for "Global" -Example "US-East-DC1". Shared = Prisma AccessThis is Case Sensitive: ').strip()
+            folder_scope = confirm_folder
+            config_type = 'local'
+            device_group_name = None
+            try:
+                with open(json_file, 'r') as file:
+                    parsed_data = json.load(file)
+            except Exception as err:
+                logger.error(f"Error while loading json file {err}")
+                sys.exit(1)
+            
 
         scm_obj_manager = setup_scm_object_manager(api_session, configure, config.obj_types, config.sec_obj, config.nat_obj, folder_scope)
 
@@ -99,6 +116,7 @@ def main(config, run_objects=None, run_security=False, run_nat=False, run_all=Fa
                     logger.error(f"No valid object found with the name {obj_name}")
                     continue
                 filtered_parsed_data = {k: v for k, v in parsed_data.items() if k == obj_name}
+                print (json.dumps(filtered_parsed_data))
                 run_selected_objects(filtered_parsed_data, scm_obj_manager, folder_scope, device_group_name, objects_to_run)
         else:
             if run_security:
@@ -134,6 +152,7 @@ if __name__ == "__main__":
     parser.add_argument('-s', '--security-rules', action='store_true', help="Run security rules processing")
     parser.add_argument('-n', '--nat-rules', action='store_true', help="Run NAT rules processing")
     parser.add_argument('-a', '--all', action='store_true', help="Run all: objects, security rules, and NAT rules")
+    parser.add_argument('-j', '--json', action='store', default="", help="Take input from local JSON configuration")
     args = parser.parse_args()
     
-    main(config, run_objects=args.objects, run_security=args.security_rules, run_nat=args.nat_rules, run_all=args.all)
+    main(config, run_objects=args.objects, run_security=args.security_rules, run_nat=args.nat_rules, run_all=args.all, json_file=args.json)
