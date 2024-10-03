@@ -1,0 +1,266 @@
+{
+    "URLCategory": [
+        {
+            "name": "test123",
+            "type": "URL List",
+            "list": [
+                "abc.com",
+                "def.com"
+            ]
+        }
+    ],
+    "URLAccessProfile": [
+        {
+            "name": "excluded resource",
+            "block": [
+                "abortion",
+                "abused-drugs",
+                "adult",
+                "alcohol-and-tobacco",
+                "artificial-intelligence",
+                "auctions",
+                "business-and-economy",
+                "command-and-control",
+                "computer-and-internet-info",
+                "content-delivery-networks",
+                "copyright-infringement",
+                "cryptocurrency",
+                "dating",
+                "dynamic-dns",
+                "educational-institutions",
+                "encrypted-dns",
+                "entertainment-and-arts",
+                "extremism"
+            ]
+        }
+    ],
+    "VulnerabilityProtectionProfile": [],
+    "AntiSpywareProfile": [],
+    "WildFireAntivirusProfile": [],
+    "ProfileGroup": [
+        {
+            "name": "sec-grp",
+            "virus_and_wildfire_analysis": [
+                "default"
+            ],
+            "spyware": [
+                "default"
+            ],
+            "vulnerability": [
+                "default"
+            ],
+            "url_filtering": [
+                "default"
+            ]
+        }
+    ],
+    "Tag": [],
+    "Address": [
+        {
+            "name": "aaa",
+            "tag": [],
+            "fqdn": "google.com"
+        },
+        {
+            "name": "abc.com",
+            "tag": [],
+            "fqdn": "abc.com"
+        },
+        {
+            "name": "store.swg.gpcloudservice.com",
+            "tag": [],
+            "fqdn": "store.swg.gpcloudservice.com"
+        },
+        {
+            "name": "xxx.proxy",
+            "tag": [],
+            "fqdn": "xx.proxy.lab.prismaaccess.com"
+        },
+        {
+            "name": "xx.lab",
+            "tag": [],
+            "fqdn": "xx.lab.gpcloudservice.com"
+        },
+        {
+            "name": "test-scm-object",
+            "tag": [],
+            "ip_netmask": "1.2.3.4"
+        }
+    ],
+    "AddressGroup": [],
+    "Service": [],
+    "ServiceGroup": [],
+    "ExternalDynamicList": [],
+    "ApplicationFilter": [],
+    "ApplicationGroup": [],
+    "Schedule": [],
+    "security_pre_rules": [
+        {
+            "name": "test-scm",
+            "tag": [],
+            "from": [
+                "trust"
+            ],
+            "source": [
+                "any"
+            ],
+            "negate_source": false,
+            "source_user": [
+                "any"
+            ],
+            "source_hip": [
+                "any"
+            ],
+            "to": [
+                "untrust"
+            ],
+            "destination": [
+                "test-scm-object"
+            ],
+            "negate_destination": false,
+            "destination_hip": [
+                "any"
+            ],
+            "application": [
+                "any"
+            ],
+            "service": [
+                "application-default"
+            ],
+            "category": [
+                "any"
+            ],
+            "disabled": false,
+            "log_setting": "Cortex Data Lake",
+            "action": "allow"
+        },
+        {
+            "name": "All",
+            "tag": [],
+            "from": [
+                "any"
+            ],
+            "source": [
+                "any"
+            ],
+            "negate_source": false,
+            "source_user": [
+                "any"
+            ],
+            "source_hip": [
+                "any"
+            ],
+            "to": [
+                "any"
+            ],
+            "destination": [
+                "any"
+            ],
+            "negate_destination": false,
+            "destination_hip": [
+                "any"
+            ],
+            "application": [
+                "any"
+            ],
+            "service": [
+                "any"
+            ],
+            "category": [
+                "any"
+            ],
+            "disabled": false,
+            "log_setting": "Cortex Data Lake",
+            "action": "allow",
+            "profile_setting": {
+                "group": [
+                    "sec-grp"
+                ]
+            }
+        }
+    ],
+    "security_post_rules": [],
+    "nat_pre_rules": [
+        {
+            "name": "VPN",
+            "from": [
+                "vpn-it",
+                "vpn-zone"
+            ],
+            "to": [
+                "untrust"
+            ],
+            "source": [
+                "any"
+            ],
+            "destination": [
+                "any"
+            ],
+            "service": "any",
+            "disabled": false,
+            "tag": [],
+            "source_translation": {
+                "dynamic_ip_and_port": {
+                    "interface_address": {
+                        "interface": "ethernet1/2"
+                    }
+                }
+            }
+        },
+        {
+            "name": "store.swg",
+            "from": [
+                "any"
+            ],
+            "to": [
+                "trust"
+            ],
+            "source": [
+                "any"
+            ],
+            "destination": [
+                "10.10.5.102"
+            ],
+            "service": "any",
+            "disabled": false,
+            "tag": []
+        },
+        {
+            "name": "xx.proxy",
+            "from": [
+                "any"
+            ],
+            "to": [
+                "trust"
+            ],
+            "source": [
+                "any"
+            ],
+            "destination": [
+                "10.10.5.101"
+            ],
+            "service": "any",
+            "disabled": false,
+            "tag": []
+        },
+        {
+            "name": "bsase.lab",
+            "from": [
+                "any"
+            ],
+            "to": [
+                "trust"
+            ],
+            "source": [
+                "any"
+            ],
+            "destination": [
+                "10.10.5.100"
+            ],
+            "service": "any",
+            "disabled": false,
+            "tag": []
+        }
+    ],
+    "nat_post_rules": []
+}

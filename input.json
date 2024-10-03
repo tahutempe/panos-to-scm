@@ -1,0 +1,28 @@
+{
+    "URLCategory": [
+        {
+            "name": "test123",
+            "type": "URL List",
+            "list": [
+                "abc.com",
+                "def.com"
+            ]
+        },
+        {
+            "name": "test124",
+            "type": "URL List",
+            "list": [
+                "abc1.com",
+                "def1.com"
+            ]
+        },
+        {
+            "name": "test1224",
+            "type": "URL List",
+            "list": [
+                "abc21.com",
+                "def21.com"
+            ]
+        }
+    ]
+}
