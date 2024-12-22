@@ -17,7 +17,6 @@ api_session = ""
 scope_param = ""
 
 # https://github.com/PaloAltoNetworks/panos-to-scm
-# https://spring.paloaltonetworks.com/pso-coe-cs/scm_migrator
 
 # sample command to run:
 # python patch-scm.py 2>&1 | tee cn-removehip1.txt
@@ -309,9 +308,9 @@ if __name__ == "__main__":
                             "group": []
                         } 
     hk_user = [
-                "ocbc-helotest\\hk"
+                "helotest\\hk"
               ]
-    source_hip =  ["OCBC-Default-HIP-Profile"]
+    source_hip =  ["Default-HIP-Profile"]
     # source_hip = ["any"]
     disabled = True
     
@@ -346,5 +345,5 @@ if __name__ == "__main__":
     
     # patch_rule("delete",position="pre", rulenames="all")
 
-    # replicate("1914731146-scm-post-rules-2024-12-18_17-50-24.json", position="post")
+    # replicate("scm-post-rules-2024-12-18_17-50-24.json", position="post")
     # replicate("test-china.json", position="post")
