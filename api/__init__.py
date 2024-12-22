@@ -112,6 +112,9 @@ class PanApiSession(OAuth2Session):
             if self.is_expired:
                 self.reauthenticate()
     
+    def get_tsg(self):
+        return self.tsg_id
+    
     @property
     def is_expired(self):
         # Check if current time is within 60 seconds of the token expiry time

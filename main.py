@@ -7,13 +7,14 @@ from parse.parse_panos import XMLParser
 from parse.parse_cisco import CiscoParser
 from api import PanApiSession
 from scm import PanApiHandler
-from scm.process import Processor, SCMObjectManager
+from scm.process1 import Processor, SCMObjectManager
 from api.palo_token import PaloToken
 from panos import PaloConfigManager
 import scm.obj as obj
 import argparse
 import json
 import sys
+from icecream import ic
 
 def setup_logging():
     logger = logging.getLogger('')
@@ -36,6 +37,7 @@ def get_file_path_and_type(config, logger):
 
     if config_choice == 'panos':
         user_choice = input("Do you want to retrieve new config from Palo Alto NGFW? (yes/no): ").strip().lower()
+        # user_choice = "no"
         file_path = "running_config.xml"
 
         if user_choice == 'yes':
@@ -73,13 +75,36 @@ def run_selected_objects(parsed_data, scm_obj_manager, scope_param, device_group
     
     scm_obj_manager.process_objects(parsed_data, scope_param, device_group_name, max_workers=6, limit=config.limit)
 
-def main(config, run_objects=None, run_security=False, run_app_override=False, run_decrypt_rules=False, run_nat=False, run_all=False,json_file=""):
+def get_config(scm_obj_manager,tsg):
+    import datetime
+
+    cur_time = datetime.datetime.now()
+    time_stamp = f"{cur_time.year}-{cur_time.month}-{cur_time.day}_{cur_time.hour}-{cur_time.minute}-{cur_time.second}"
+    pre_rules = scm_obj_manager.fetch_rules(config.sec_obj, limit='100000', position='pre')
+    post_rules = scm_obj_manager.fetch_rules(config.sec_obj, limit='100000', position='post')
+    
+    with open(f"{tsg}-scm-pre-rules-{time_stamp}.json","w") as f:
+        f.write(json.dumps(pre_rules,indent=4))
+    with open(f"{tsg}-scm-post-rules-{time_stamp}.json","w") as f:
+        f.write(json.dumps(post_rules,indent=4))
+    result = scm_obj_manager.get_current_objects(config.obj_types)
+    with open(f"{tsg}-scm-objects-{time_stamp}.json","w") as f:
+        result1 = {}
+        for entry in result:
+            obj_name = entry._endpoint.split("/")[-1][:-1]
+            result1[obj_name] = result[entry]
+
+        f.write(json.dumps(result1,indent=4))
+
+def main(config, run_objects=None, run_security=False, run_app_override=False, run_decrypt_rules=False, run_nat=False, run_all=False,json_file="", backuponly=True):
     try:
+        parsed_data = {}
         start_time = time.time()
         logger.info(f"Script started at {time.ctime(start_time)}")
 
         api_session = PanApiHandler(initialize_api_session())
-
+        
+        # api_session.session.get_tsg()
         if run_objects:
             run_objects_list = run_objects.split(',')
             logger.info(f'Running specific objects: {run_objects_list}')
@@ -89,6 +114,9 @@ def main(config, run_objects=None, run_security=False, run_app_override=False, r
         if json_file != "":
             scope_type = input("Do you want to use a folder or a snippet? Enter 'folder' or 'snippet': ").strip().lower()
             scope_value = input(f'Enter the {scope_type} name (Use "All" for "Global", "Shared" for "Prisma Access"): ').strip()
+            # scope_type = "snippet"
+            # scope_value = "test-upload"
+
             config_type = 'local'
             device_group_name = None
             try:
@@ -99,13 +127,28 @@ def main(config, run_objects=None, run_security=False, run_app_override=False, r
                 sys.exit(1)
             scope_param = f"&{scope_type}={scope_value}"
         else:
-            file_path, config_type = get_file_path_and_type(config, logger)
+           
+            if backuponly:
+                scope_type = input("Do you want to use a folder or a snippet? Enter 'folder' or 'snippet': ").strip().lower()
+                scope_value = input(f'Enter the {scope_type} name (Use "All" for "Global", "Shared" for "Prisma Access"): ').strip()
+                scope_param = f"&{scope_type}={scope_value}"
+                config_type = "panos"
+            else:
+                # get config backup location
+                file_path, config_type = get_file_path_and_type(config, logger)
 
-            logger.info(f"File path: {file_path}, Config type: {config_type}")
-
-            if config_type == 'panos':
+                logger.info(f"File path: {file_path}, Config type: {config_type}")
+            
+            if config_type == 'panos' and not backuponly:
                 parser = XMLParser(file_path, config_type)
                 scope_param, config_type, device_group_name = parser.parse_config_and_set_scope(file_path)
+                # print (f"budi11 - {scope_param}")
+                # scope_type = "snippet"
+                # scope_value = "test-upload"
+                
+                # config_type = "panos"
+                # scope_param = f"&{scope_type}={scope_value}"
+                device_group_name = None
                 scope_type, scope_value = scope_param.replace('&', '').split('=')
                 logger.info(f'Current SCM {scope_type}: {scope_value}, PANOS: {config_type}, Device Group: {device_group_name}')
                 parser.config_type = config_type
@@ -115,13 +158,17 @@ def main(config, run_objects=None, run_security=False, run_app_override=False, r
                 else:
                     run_objects_list = []  # Initialize as empty list
                     parsed_data = parser.parse_all()
-                
-            else:
+                with open("parsed_data.json","w") as f:
+                    f.write(json.dumps(parsed_data,indent=4)) 
+                    
+            if config_type == 'cisco':
                 parser = CiscoParser(file_path)
                 parser.parse()
                 parsed_data = parser.get_parsed_data()
-                scope_type = input("Do you want to use a folder or a snippet for Cisco config? Enter 'folder' or 'snippet': ").strip().lower()
-                scope_value = input(f"What {scope_type} is Cisco config going into? Case Sensitive: ").strip()
+                # scope_type = input("Do you want to use a folder or a snippet for Cisco config? Enter 'folder' or 'snippet': ").strip().lower()
+                # scope_value = input(f"What {scope_type} is Cisco config going into? Case Sensitive: ").strip()
+                scope_type = "folder"
+                scope_value = "test-demo1"
                 scope_param = f"&{scope_type}={scope_value}"
                 device_group_name = None
                 run_objects_list = run_objects.split(',') if run_objects else []
@@ -129,9 +176,14 @@ def main(config, run_objects=None, run_security=False, run_app_override=False, r
             logger.debug(f"Parse Data: {json.dumps(parsed_data,indent=4)}")
             logger.debug(f"Parsed data keys: {list(parsed_data.keys())}")
 
+        input(f"Continue: scope_type {scope_type} scope_value: {scope_value} ?")
         selected_obj_types = [obj for obj in config.obj_types if obj.__name__ in run_objects_list] if run_objects else config.obj_types
         scm_obj_manager = setup_scm_object_manager(api_session, selected_obj_types, config.sec_obj, config.nat_obj, scope_param)
-
+        logger.info(f"Backing up config")
+        get_config(scm_obj_manager,tsg=api_session.session.get_tsg())
+        if backuponly:
+            sys.exit(0)
+        
         if run_all:
             scm_obj_manager.process_objects(parsed_data, scope_param, device_group_name, max_workers=6, limit=config.limit)
             scm_obj_manager.process_rules(config.sec_obj, parsed_data, file_path, limit=config.limit, rule_type='security')
@@ -143,6 +195,7 @@ def main(config, run_objects=None, run_security=False, run_app_override=False, r
             run_selected_objects(parsed_data, scm_obj_manager, scope_param, device_group_name, run_objects_list)
         else:
             if run_security:
+                print (f"{config.sec_obj}, {parsed_data}, {file_path}, limit={config.limit},")
                 scm_obj_manager.process_rules(config.sec_obj, parsed_data, file_path, limit=config.limit, rule_type='security')
             elif run_app_override:
                 scm_obj_manager.process_rules(config.app_override_obj, parsed_data, file_path, limit=config.limit, rule_type='application-override')
@@ -182,6 +235,7 @@ if __name__ == "__main__":
     parser.add_argument('-n', '--nat-rules', action='store_true', help="Run NAT rules")
     parser.add_argument('-a', '--all', action='store_true', help="Run all: Object types as well as Security, App Override, Decryption and NAT policies")
     parser.add_argument('-j', '--json', action='store', default="", help="Take input from local JSON configuration")
-    args = parser.parse_args()
+    parser.add_argument('-b', '--backuponly',action='store_true', help="Backup config")
+    args = parser.parse_args() 
     
-    main(config, run_objects=args.objects, run_security=args.security_rules, run_app_override=args.app_override_rules, run_decrypt_rules=args.decryption_rules, run_nat=args.nat_rules, run_all=args.all, json_file=args.json)
+    main(config, run_objects=args.objects, run_security=args.security_rules, run_app_override=args.app_override_rules, run_decrypt_rules=args.decryption_rules, run_nat=args.nat_rules, run_all=args.all, json_file=args.json, backuponly=args.backuponly)

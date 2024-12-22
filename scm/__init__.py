@@ -143,6 +143,29 @@ class PanApiHandler:
 
         return {'status': 'failed', 'message': 'Failed after retries', 'name': item_data.get('name')}
 
-    def delete_object(self, endpoint, retries=1, delay=0.5):
+    def delete(self, endpoint, retries=1, delay=0.5):
         """ Delete an object via the API. """
         # Similar logic to get_object, but using session.delete
+        url = f"{self.BASE_URL}{endpoint}"
+        for attempt in range(retries + 1):
+            try:
+                self.ensure_valid_token()
+                response = self.session.delete(url, timeout=20)
+                
+                if response.status_code in [200, 204]:
+                    return {'status': 'success', 'message': 'Object deleted', 'name': "deleted object"}
+                else:
+                    error_response = response.json()
+                    logging.error(f"API Error for {error_response}, Status Code: {response.status_code}")
+                    if attempt < retries:
+                        time.sleep(delay)
+                    else:
+                        return {'status': 'error', 'message': 'Error: Object update failed', 'name': 'name', 'response': error_response}
+            except Exception as e:
+                logging.error(f"Exception occurred while trying deleting: {str(e)}")
+                if attempt < retries:
+                    time.sleep(delay)
+                else:
+                    return {'status': 'exception', 'message': f"Exception: {str(e)}", 'name': 'name'}
+
+        return {'status': 'failed', 'message': 'Failed after retries', 'name': 'name'}

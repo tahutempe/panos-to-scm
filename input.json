@@ -1,28 +1,43 @@
 {
-    "URLCategory": [
+    "security_pre_rules": [
         {
-            "name": "test123",
-            "type": "URL List",
-            "list": [
-                "abc.com",
-                "def.com"
-            ]
-        },
-        {
-            "name": "test124",
-            "type": "URL List",
-            "list": [
-                "abc1.com",
-                "def1.com"
-            ]
-        },
-        {
-            "name": "test1224",
-            "type": "URL List",
-            "list": [
-                "abc21.com",
-                "def21.com"
-            ]
+            "name": "test-scm1",
+            "tag": [],
+            "from": [
+                "trust"
+            ],
+            "source": [
+                "any"
+            ],
+            "negate_source": false,
+            "source_user": [
+                "any"
+            ],
+            "source_hip": [
+                "any"
+            ],
+            "to": [
+                "untrust"
+            ],
+            "destination": [
+                "test-scm-object"
+            ],
+            "negate_destination": false,
+            "destination_hip": [
+                "any"
+            ],
+            "application": [
+                "any"
+            ],
+            "service": [
+                "application-default"
+            ],
+            "category": [
+                "any"
+            ],
+            "disabled": false,
+            "log_setting": "Cortex Data Lake",
+            "action": "allow"
         }
     ]
 }

@@ -81,10 +81,17 @@ class Processor:
             moves = []
             for i, rule_name in enumerate(desired_order[:-1]):
                 if current_order.index(rule_name) > current_order.index(desired_order[i + 1]):
+                    move_data = {
+                        "destination": "before",
+                        "destination_rule": current_rule_ids[desired_order[i + 1]],
+                        "folder": "test-demo1",
+                        "rulebase": position
+                    }
                     moves.append((
                         f"{endpoint}/{current_rule_ids[rule_name]}:move",
-                        {"destination": "before", "rulebase": position, "destination_rule": current_rule_ids[desired_order[i + 1]]}
+                        move_data
                     ))
+                    self.logger.info(f"URL : {endpoint}/{current_rule_ids[rule_name]}:move")
                     self.logger.info(f"Prepared move: Rule '{rule_name}' before '{desired_order[i + 1]}'")
 
             if not moves:
@@ -93,8 +100,9 @@ class Processor:
             with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
                 futures = [executor.submit(self.api_handler.post, endpoint, move_data) for endpoint, move_data in moves]
                 for future in as_completed(futures):
-                    if future.result()['status'] != 'success':
-                        self.logger.error(f"Error moving rule: {future.result()}")
+                    result = future.result()
+                    if result['status'] != 'success':
+                        self.logger.error(f"Error moving rule: {result}")
 
             # Use the fetch_rules method from SCMObjectManager
             current_rules = self.scm_object_manager.fetch_rules(obj_type, limit=limit, position=position)
@@ -122,7 +130,7 @@ class Processor:
 
 
 class SCMObjectManager:
-    def __init__(self, api_handler, scope_param, obj_module, obj_types, sec_obj, nat_obj):
+    def __init__(self, api_handler, scope_param, obj_module, obj_types, sec_obj, nat_obj, user_interaction=None):
         self.api_handler = api_handler
         self.scope_param = scope_param
         self.configure = Processor(api_handler, 6, obj_module, self)
@@ -132,6 +140,7 @@ class SCMObjectManager:
         self.nat_obj = nat_obj        
         self.logger = logging.getLogger(__name__)
         self.scope_type, self.scope_value = self.parse_scope_param(scope_param)
+        self.user_interaction = user_interaction
 
     def parse_scope_param(self, scope_param):
         scope_type, scope_value = scope_param.lstrip('&').split('=')
@@ -187,12 +196,13 @@ class SCMObjectManager:
     def process_objects(self, parsed_data, scope_param, device_group_name, max_workers=6, limit='10000'):
         self.logger.info(f'Workers grabbing objects: {max_workers}')
         current_objects = self.get_current_objects(self.obj_types, max_workers, limit)
-        new_entries, updated_entries = self.get_new_and_updated_entries(parsed_data, current_objects)
+        new_entries, updated_entries, newly_created_entries, ignored_entries = self.get_new_and_updated_entries(parsed_data, current_objects)
 
         if any(new_entries.values()):
             self.post_new_entries(new_entries, scope_param, device_group_name)
 
-        self.update_existing_entries(updated_entries, scope_param, device_group_name, limit)
+        # Pass newly_created_entries to update_existing_entries
+        self.update_existing_entries(updated_entries, newly_created_entries, scope_param, current_objects)
 
     def get_current_objects(self, obj_types, max_workers=6, limit='10000', **kwargs):
         self.logger.info(f"Running with {max_workers} workers.")
@@ -210,6 +220,9 @@ class SCMObjectManager:
     def get_new_and_updated_entries(self, parsed_data, current_objects):
         new_entries = {}
         updated_entries = {}
+        newly_created_entries = {}
+        ignored_entries = {}
+
         for obj_type, current_set in current_objects.items():
             entry_type_name = obj_type.__name__
             parsed_data_key = self._generate_key_name(entry_type_name)
@@ -226,10 +239,15 @@ class SCMObjectManager:
                     existing_obj = next(o for o in current_set if o['name'] == name)
                     parsed_obj_with_id = {**parsed_obj, 'id': existing_obj.get('id')}
                     if self.needs_update(parsed_obj_with_id, existing_obj):
-                        resolved_entry = self.resolve_conflicts(parsed_obj_with_id, existing_obj)
-                        updated_entries.setdefault(entry_type_name, []).append(resolved_entry)
+                        resolved_entry, is_new, is_ignored = self.resolve_conflicts(parsed_obj_with_id, existing_obj)
+                        if is_new:
+                            newly_created_entries.setdefault(entry_type_name, []).append(resolved_entry)
+                        elif is_ignored:
+                            ignored_entries.setdefault(entry_type_name, []).append(resolved_entry)
+                        else:
+                            updated_entries.setdefault(entry_type_name, []).append(resolved_entry)
 
-        return new_entries, updated_entries
+        return new_entries, updated_entries, newly_created_entries, ignored_entries
 
     def resolve_conflicts(self, new_object, current_object):
         normalized_new = self.normalize(new_object.copy())
@@ -237,26 +255,40 @@ class SCMObjectManager:
 
         if normalized_new == normalized_current:
             self.logger.debug(f"Objects '{new_object['name']}' are identical after normalization. Skipping conflict resolution.")
-            return current_object
+            return current_object, False, False
 
-        print(f"Conflict detected for object '{new_object['name']}'")
-        print(f"SCM Object: {normalized_current}")
-        print(f"New Object: {normalized_new}")
-        choice = input("Choose an action: [M]erge, [R]eplace, [C]reate new with appended name, [I]gnore (M/R/C/I): ").strip().upper()
+        self.logger.info(f"Conflict detected for object '{new_object['name']}'")
+        self.logger.info(f"SCM Object: {normalized_current}")
+        self.logger.info(f"New Object: {normalized_new}")
+
+        if self.user_interaction:
+            # Prepare conflict data
+            conflict_data = {
+                'object_name': new_object['name'],
+                'current_object': normalized_current,
+                'new_object': normalized_new
+            }
+            # Get user's choice
+            choice = self.user_interaction.get_user_choice(conflict_data)
+        else:
+            # CLI mode
+            choice = input("Choose an action: [M]erge, [R]eplace, [C]reate new with appended name, [I]gnore (M/R/C/I): ").strip().upper()
 
         if choice == 'M':
-            return self.merge_entries(new_object, current_object)
+            return self.merge_entries(new_object, current_object), False, False
         elif choice == 'R':
-            return new_object
+            new_object['id'] = current_object['id']
+            return new_object, False, False
         elif choice == 'C':
             new_object['name'] = f"{new_object['name']}_new"
-            return new_object
+            new_object.pop('id', None)  # Remove the ID to ensure it is treated as a new object
+            return new_object, True, False
         elif choice == 'I':
             self.logger.info(f"Ignoring conflict for object '{new_object['name']}'. No changes will be made.")
-            return current_object
+            return current_object, False, True
         else:
-            print("Invalid choice. Ignoring conflict and making no changes.")
-            return current_object
+            self.logger.warning("Invalid choice. Ignoring conflict and making no changes.")
+            return current_object, False, False
 
     @staticmethod
     def merge_entries(new_object, current_object):
@@ -274,43 +306,38 @@ class SCMObjectManager:
         normalized_current = SCMObjectManager.normalize(current_object)
         return normalized_new != normalized_current
 
-    def update_existing_entries(self, updated_entries, scope_param, device_group_name, limit):
+    def update_existing_entries(self, updated_entries, newly_created_entries, scope_param, current_objects):
         for obj_type in self.obj_types:
             entry_type_name = obj_type.__name__
-            if entry_type_name not in updated_entries:
+            if entry_type_name not in updated_entries and entry_type_name not in newly_created_entries:
                 continue
 
             entry_class = getattr(self.obj, entry_type_name)
-            for entry in updated_entries[entry_type_name]:
-                object_id = entry.pop('id', None)
-                if not object_id:
-                    self.logger.warning(f"Warning: Object ID not found for {entry['name']} in {entry_type_name}. Skipping update.")
-                    continue
+            
+            # Update existing entries
+            if entry_type_name in updated_entries:
+                for entry in updated_entries[entry_type_name]:
+                    object_id = entry.pop('id', None)
+                    if not object_id:
+                        self.logger.warning(f"Warning: Object ID not found for {entry['name']} in {entry_type_name}. Skipping update.")
+                        continue
 
-                endpoint = f"{entry_class.get_endpoint().replace('?', '')}/{object_id}"
-                
-                # Parse the scope_param
-                scope_type, scope_value = scope_param.lstrip('&').split('=')
-                
-                # Construct the params dictionary for the API call
-                params = {scope_type: scope_value, 'limit': limit}
-                
-                current_objects = self.api_handler.get(entry_class.get_endpoint(), params=params)
-                current_object = next((obj for obj in current_objects if obj['name'] == entry['name']), None)
-                
-                if not current_object:
-                    self.logger.error(f"Current object '{entry['name']}' not found in SCM. Skipping update.")
-                    continue
-
-                if self.normalize(entry) != self.normalize(current_object):
+                    endpoint = f"{entry_class.get_endpoint().replace('?', '')}/{object_id}"
                     self.logger.info(f"Updating {entry_type_name}: {entry['name']} at endpoint: {endpoint}")
-                    result = self.api_handler.put(endpoint, entry)
+                    
+                    # Ensure all necessary fields are included
+                    original_object = next((o for o in current_objects[obj_type] if o['id'] == object_id), {})
+                    updated_entry = {**original_object, **entry}  # Merge original and updated fields
+
+                    result = self.api_handler.put(endpoint, updated_entry)
                     if result['status'] == 'success':
-                        self.logger.info(f"Updated {entry_type_name}: {entry['name']} with values: {entry}")
+                        self.logger.info(f"Updated {entry_type_name}: {entry['name']} with values: {updated_entry}")
                     else:
                         self.logger.error(f"Failed to update {entry_type_name}: {entry['name']}, Reason: {result['message']}")
-                else:
-                    self.logger.info(f"No changes detected for {entry['name']}. Skipping update.")
+
+            # Create newly resolved entries
+            if entry_type_name in newly_created_entries:
+                self.configure.post_entries(scope_param, newly_created_entries[entry_type_name], entry_class, extra_query_params='')
 
     def _generate_key_name(self, entry_type_name):
         return entry_type_name.replace(' ', '-')
@@ -346,7 +373,10 @@ class SCMObjectManager:
         rules_to_create_pre = [rule for rule in pre_rules if rule['name'] not in current_rule_names_pre]
         rules_to_create_post = [rule for rule in post_rules if rule['name'] not in current_rule_names_post]
 
-        self.configure.set_max_workers(1 if rule_type == 'nat' else 6)
+        '''
+        Move feature broke for NAT Rules and All Snippet Policies -- so use serial processing for those, use parallel processing for other rule types
+        '''
+        self.configure.set_max_workers(1 if rule_type == 'nat' or self.scope_type == 'snippet' else 6)
 
         rule_types = [
             (rules_to_create_pre, "position=pre", f"pre-{rule_type}-rules"),
@@ -363,11 +393,11 @@ class SCMObjectManager:
         self.reorder_rules_if_needed(rule_obj, post_rules, current_rules_post, limit, position='post')
 
     def reorder_rules_if_needed(self, rule_obj, desired_rules, current_rules, limit, position):
-        if not self.is_rule_order_correct(current_rules, desired_rules, limit):
-            self.configure.check_and_reorder_rules(rule_obj, self.scope_param, desired_rules, limit='10000', position=position)
+        if not self.is_rule_order_correct(current_rules, desired_rules):
+            self.configure.check_and_reorder_rules(rule_obj, self.scope_param, desired_rules, limit=limit, position=position)
 
     @staticmethod
-    def is_rule_order_correct(current_rules, desired_rules, limit):
+    def is_rule_order_correct(current_rules, desired_rules):
         current_rule_names = [rule['name'] for rule in current_rules]
         desired_rule_names = [rule['name'] for rule in desired_rules]
         return current_rule_names == desired_rule_names
@@ -409,7 +439,7 @@ class SCMObjectManager:
                 return convert_to_int_if_possible(item)
 
         normalized = {k: v for k, v in obj.items() 
-                    if k not in {'folder', 'snippet', 'type', 'fqdn', 'protocol', 'description'} 
+                    if k not in {'folder', 'snippet', 'type', 'description'} 
                     and v not in (None, [], {})
                     and not (k == 'threat_name' and v == 'any')}
         
