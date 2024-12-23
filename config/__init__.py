@@ -25,8 +25,8 @@ class AppConfig:
         self.decryption_rule_obj = obj.DecryptionRule
 
 class ConfigurationManager:
-    def __init__(self):
-        self.config_file_path = os.path.expanduser('~/.panapi/config.yml')
+    def __init__(self,config_file='~/.panapi/config.yml'):
+        self.config_file_path = os.path.expanduser(config_file)
         self.app_config = AppConfig()
         self.ensure_config_exists()
         self.check_for_default_settings()

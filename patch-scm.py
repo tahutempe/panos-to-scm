@@ -12,6 +12,7 @@ from api import PanApiSession
 import re
 import gjson
 import dictdiffer
+import pandas
 
 api_session = ""
 scope_param = ""
@@ -88,7 +89,8 @@ def patch_rule(action, **kwargs):
         position = kwargs['position']
         logger.info(f"Add new rule : {new_rule}, position: {position}")
         extra_query_param = f"position={kwargs['position']}"
-        scm_obj_manager.configure.post_entries(scope_param, new_rule, obj.SecurityRule, extra_query_params=extra_query_param)
+        if kwargs.get("dryrun",False) == True:
+            scm_obj_manager.configure.post_entries(scope_param, new_rule, obj.SecurityRule, extra_query_params=extra_query_param)
 
     if action == "update":
         
@@ -100,9 +102,6 @@ def patch_rule(action, **kwargs):
         if len(rule_exclude) >= 1:
             rule_names = gjson.get(current_rules,"#.name")
             rulenames = list(set(rule_names) - set (rule_exclude))
-
-            # print(rulenames)
-            # print (rule_exclude)
             logger.info("Excluding rules")
             logger.info (f"Total Rules - {len(rule_names)} - Excluded Rules {len(rule_exclude)} - Affected rules {len(rulenames)}")
 
@@ -144,7 +143,8 @@ def patch_rule(action, **kwargs):
                     logger.info(f"new value: {json.dumps(rule,indent=4)}")
 
                     ## remark next line if you want to testing
-                    scm_obj_manager.api_handler.put(endpoint,rule)
+                    if kwargs.get("dryrun",False) == True:
+                        scm_obj_manager.api_handler.put(endpoint,rule)
                 else:
                     logger.info(f"Object value already match object:{kwargs['object']} current value: {rule[kwargs['object']]} new value: {kwargs['object_value']} - skipping")
                     logger.info(f"Object value already match - skipping")
@@ -158,7 +158,8 @@ def patch_rule(action, **kwargs):
                 logger.info(f"Found rule to be deleted - name {rule['name']} - id {rule['id']}")
                 endpoint = f"/sse/config/v1/security-rules/{rule['id']}?position={position}{scope_param}"
                 logger.info(f"Endpoint : {endpoint}")
-                scm_obj_manager.api_handler.delete(endpoint)
+                if kwargs.get("dryrun",False) == True:
+                    scm_obj_manager.api_handler.delete(endpoint)
 
     if action == "user_format":
         position = kwargs['position']
@@ -197,7 +198,8 @@ def patch_rule(action, **kwargs):
                 # rule[kwargs['object']] = kwargs['object_value']
                 logger.info(f"new value: {json.dumps(rule,indent=4)}")
                 logger.info(f"endpoint {endpoint}")
-                # scm_obj_manager.api_handler.put(endpoint,rule)
+                if kwargs.get("dryrun",False) == True:
+                    scm_obj_manager.api_handler.put(endpoint,rule)
 
  
 def read_file(filename):
@@ -249,101 +251,133 @@ def replicate(input_file,**kwargs):
                     logger.info(f"new value: {json.dumps(rule1,indent=4)}")
                     # scm_obj_manager.api_handler.put(endpoint,rule1)
 
+def backup(format='json', folder='./'):
+    """ 
+    Backup SCM config
+    """
+    import datetime
 
-if __name__ == "__main__":
-    setup_logging()
-    logger = logging.getLogger(__name__)
-    begin_time = time.time()
-    config_manager = ConfigurationManager()
-    config = config_manager.app_config
-    test_rule = [{
-            "name": "test-scm-5",
-            "tag": [],
-            "from": ["trust"],
-            "source": ["any"],
-            "negate_source": False,
-            "source_user": ["any"],
-            "source_hip": ["any"],
-            "to": ["untrust"],
-            "destination": ["test-scm-object"],
-            "negate_destination": False,
-            "destination_hip": ["any"],
-            "application": ["any"],
-            "service": ["application-default"],
-            "category": ["any"],
-            "disabled": False,
-            "log_setting": "Cortex Data Lake",
-            "action": "allow",
-            "profile_setting": {
-                "group": [
-                     "sec-grp"
-                ]
-            }
-        }, {
-            "name": "test-scm-6",
-            "tag": [],
-            "from": ["trust"],
-            "source": ["any"],
-            "negate_source": False,
-            "source_user": ["any"],
-            "source_hip": ["any"],
-            "to": ["untrust"],
-            "destination": ["test-scm-object"],
-            "negate_destination": False,
-            "destination_hip": ["any"],
-            "application": ["any"],
-            "service": ["application-default"],
-            "category": ["any"],
-            "disabled": False,
-            "log_setting": "Cortex Data Lake",
-            "action": "allow",
-            "profile_setting": {
-                "group": [
-                     "sec-grp"
-                ]
-            }
-        }]
-    # patch_rule("add",rule=test_rule,position="pre")
-    new_sec_profile =  {
-                            "group": []
-                        } 
-    hk_user = [
-                "helotest\\hk"
-              ]
-    source_hip =  ["Default-HIP-Profile"]
-    # source_hip = ["any"]
-    disabled = True
+    global api_session
+    global scope_param
+    # selected_obj_types = [obj for obj in config.obj_types if obj.__name__ in run_objects_list] if run_objects else config.obj_types
+    logger.info(f"Backup Config - output {format}, folder={folder}")
+    scm_obj_manager = setup_scm_object_manager(api_session, [], config.sec_obj, config.nat_obj, scope_param)
+    tsg = api_session.session.get_tsg()
+    cur_time = datetime.datetime.now()
+    time_stamp = f"{cur_time.year}-{cur_time.month}-{cur_time.day}_{cur_time.hour}-{cur_time.minute}-{cur_time.second}"
+    pre_rules = scm_obj_manager.fetch_rules(config.sec_obj, limit='100000', position='pre')
+    post_rules = scm_obj_manager.fetch_rules(config.sec_obj, limit='100000', position='post')
+    result = scm_obj_manager.get_current_objects(config.obj_types)
+    result1 = {}
+    for entry in result:
+        obj_name = entry._endpoint.split("/")[-1][:-1]
+        result1[obj_name] = result[entry]
+
+    if format.lower() == 'json':
+        with open(f"{folder}/{tsg}-scm-pre-rules-{time_stamp}.json","w") as f:
+            f.write(json.dumps(pre_rules,indent=4))
+
+        with open(f"{folder}/{tsg}-scm-post-rules-{time_stamp}.json","w") as f:
+            f.write(json.dumps(post_rules,indent=4))
+
+        with open(f"{folder}/{tsg}-scm-objects-{time_stamp}.json","w") as f:
+            f.write(json.dumps(result1,indent=4))
     
-    initialise()
+    if format.lower() == 'xlsx':
+        
+        pre_rules_df = pandas.DataFrame(pre_rules)
+        pre_rules_df.to_excel(f"{folder}/{tsg}-scm-pre-rules-{time_stamp}.xlsx")
+        post_rules_df = pandas.DataFrame(post_rules)
+        post_rules_df.to_excel(f"{folder}/{tsg}-scm-post-rules-{time_stamp}.xlsx")
+        with pandas.ExcelWriter(f"{folder}/{tsg}-scm-objects-{time_stamp}.xlsx", engine='xlsxwriter') as writer:
+            for res in result1:
+                df = pandas.DataFrame(result1[res])
+                df.to_excel(writer, sheet_name=res[:31])
+    
 
-    # use read_file function to convert text that contains rulename into python list
-    enabled_rules = read_file("remove-hip.txt")
+def patch(dryrun=True):
+    """
+    Patch SCM Config
+    Examples:
 
     ## Predefined rule names
     # ['all-rules-allow'] => all allow rules
     # ['all-rules'] => all rules
     # ['all-rules-deny'] => all deny rules
-
-
-    # Enable hip on 24/12
-    # patch_rule("update",object="source_hip",object_value=source_hip,position="post", rulenames=['all-rules'], fix_logging = True)
-
+    
+    # Example 1 - Update source_hip field to "any" for all rules. 
+    # source_hip = ['any']
     # patch_rule("update",object="source_hip",object_value=source_hip,position="post", rulenames=['all-rules'], fix_logging = True)
     
+    # Example 2 - Update set rule policy-158 to disable.
+    # disabled = True
     # patch_rule("update",object="disabled",object_value=disabled,position="post", rulenames=['policy-158'], fix_logging = True)
-    
+     
+    # Example 3 - Update all enabled rules to disable 
+    # disabled = True
+    # enabled_rules = read_file("remove-hip.txt")
     # patch_rule("update",object="disabled",object_value=disabled,position="post", rule_exclude=enabled_rules, fix_logging = True)
     
-    # patch_rule("update",position="post", rulenames=['all-rules'], fix_logging = True)
-    
-    # patch_rule("update",object="source_hip",object_value=source_hip,position="post", rulenames=['ADEM__URLs_Allow','policy-158'])
-    
+    # Example 4 - Update application to web-browsing and ssl for all rules  
     # patch_rule("update",object="application",object_value=["web-browsing","ssl"],position="pre", rulenames=["all-rules"])
-    # patch_rule("update",object="source_hip",object_value=source_hip,position="post", rulenames=enabled_rules)
-    
-    # patch_rule("user_format",position="pre", rulenames=['aa','policy-1 with user - no url category','policy-2 with user  - with url cat'])
-    
-    # patch_rule("delete",position="pre", rulenames="all")
+    """
 
+    #source_hip = ['OCBC-Default-HIP-Profile']
+    # patch_rule("update",object="source_hip",object_value=source_hip,position="post", rulenames=['all-rules'], fix_logging = True, dryrun=dryrun)
+
+    
     # replicate("scm-post-rules-2024-12-18_17-50-24.json", position="post")
     # replicate("test-china.json", position="post")
+
+def replicate(dryrun=True, input_file='input.json', position='post'):
+    """
+    Replicate SCM json rule
+    This only replicate rules that are already exists in the system
+    """
+    # replicate("scm-post-rules-2024-12-18_17-50-24.json", position="post")
+    # replicate("test-china.json", position="post")
+    # replicate(input_file, position)
+
+
+if __name__ == "__main__":
+    setup_logging()
+    logger = logging.getLogger(__name__)
+    begin_time = time.time()
+
+    parser = argparse.ArgumentParser(description="SCM Utility and Patcher")
+    parser.add_argument('-c','--config',action='store',default='~/.panapi/config.yml')
+    
+    subparsers = parser.add_subparsers(dest='command', required=True, help='command')
+
+    backup_parsers = subparsers.add_parser('backup', help="Backup SCM Config")
+    backup_parsers.add_argument('-f', dest='format', choices=['json','xlsx'], help="Backup Output format", default='json')
+    backup_parsers.add_argument('-o', dest='folder', action='store', help="Backup folder", default='./')
+
+    patcher_parser = subparsers.add_parser('patch', help="patch SCM Config")
+    patcher_parser.add_argument('-nd',dest='nodryrun',help="Dry Run", action='store_true', default=True)
+    
+    replicate_parser = subparsers.add_parser('replicate', help="replicate SCM Config")
+    replicate_parser.add_argument('-f', '--file', action='store', default='scm-rule.json')
+    replicate_parser.add_argument('-p', '--position', choices=['pre','post'], default='post')
+
+    args = parser.parse_args() 
+
+    initialise()
+
+    config_manager = ConfigurationManager(args.config)
+    config = config_manager.app_config
+
+    if args.command == 'backup':
+        backup(folder=args.folder,format=args.format)
+
+    if args.command == 'patch':
+        patch(dryrun=args.dryrun)
+
+    if args.command == 'replicate':
+        replicate(dryrun=args.dryrun, input_file=args.file, position=args.position)
+    
+    
+    
+    
+
+
