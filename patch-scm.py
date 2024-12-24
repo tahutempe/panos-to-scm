@@ -224,10 +224,16 @@ def read_file(filename):
     with open(filename, "r") as f:
         return f.read().splitlines()
 
-def replicate(input_file,**kwargs):
+def do_replicate(input_file,**kwargs):
     ### replicate json config
     global api_session
     global scope_param
+
+    if kwargs.get("dryrun",True) == False:
+        logger.info("Running in execution run mode")
+    else:
+        logger.info("Running in dry run mode")
+
     # selected_obj_types = [obj for obj in config.obj_types if obj.__name__ in run_objects_list] if run_objects else config.obj_types
     scm_obj_manager = setup_scm_object_manager(api_session, [], config.sec_obj, config.nat_obj, scope_param)
     # scm_obj_manager.process_rules(config.sec_obj, parsed_data, file_path, limit=config.limit, rule_type='security')
@@ -267,8 +273,9 @@ def replicate(input_file,**kwargs):
                     rule1 = input_rule
                     rule1['id'] = rule_id
                     logger.info(f"new value: {json.dumps(rule1,indent=4)}")
-                    # scm_obj_manager.api_handler.put(endpoint,rule1)
-
+                    if kwargs.get("dryrun",True) == False:
+                        scm_obj_manager.api_handler.put(endpoint,rule1)
+                        
 def backup(format='json', folder='./'):
     """ 
     Backup SCM config
@@ -352,10 +359,10 @@ def replicate(dryrun=True, input_file='input.json', position='post'):
     Replicate SCM json rule
     This only replicate rules that are already exists in the system
     """
-    # replicate("scm-post-rules-2024-12-18_17-50-24.json", position="post")
-    # replicate("test-china.json", position="post")
-    # replicate(input_file, position)
-
+    logger.info("Running replicate")
+    logger.info(f"Input file: {input_file}, Position: {position}")
+    do_replicate(input_file, position=position)
+    logger.info ("Finish replicate")
 
 if __name__ == "__main__":
     setup_logging()
@@ -377,6 +384,7 @@ if __name__ == "__main__":
     replicate_parser = subparsers.add_parser('replicate', help="replicate SCM Config")
     replicate_parser.add_argument('-f', '--file', action='store', default='scm-rule.json')
     replicate_parser.add_argument('-p', '--position', choices=['pre','post'], default='post')
+    replicate_parser.add_argument('-nd',dest='nodryrun',help="Dry Run", action='store_true', default=False)
 
     args = parser.parse_args() 
 
@@ -392,7 +400,7 @@ if __name__ == "__main__":
         patch(dryrun=not args.nodryrun)
 
     if args.command == 'replicate':
-        replicate(dryrun=args.dryrun, input_file=args.file, position=args.position)
+        replicate(dryrun=not args.nodryrun, input_file=args.file, position=args.position)
     
     
     
