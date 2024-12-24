@@ -13,6 +13,18 @@ import re
 import gjson
 import dictdiffer
 import pandas
+import ssl
+
+
+## Temporary setup to ignore SSL warning
+try:
+    _create_unverified_https_context = ssl._create_unverified_context
+except AttributeError:
+    # Legacy Python that doesn't verify HTTPS certificates by default
+    pass
+else:
+    # Handle target environment that doesn't support HTTPS verification
+    ssl._create_default_https_context = _create_unverified_https_context
 
 api_session = ""
 scope_param = ""
@@ -79,6 +91,12 @@ def patch_rule(action, **kwargs):
     current_rules_pre = scm_obj_manager.fetch_rules(config.sec_obj, limit='100000', position='pre')
     current_rules_post = scm_obj_manager.fetch_rules(config.sec_obj, limit='100000', position='post')
     # print (json.dumps(current_rules_pre,indent=4))
+
+    if kwargs.get("dryrun",True) == False:
+        logger.info("Running in execution run mode")
+    else:
+        logger.info("Running in dry run mode")
+    
     if kwargs['position'] == 'pre':
         current_rules = current_rules_pre
     if kwargs['position'] == 'post':
@@ -89,7 +107,7 @@ def patch_rule(action, **kwargs):
         position = kwargs['position']
         logger.info(f"Add new rule : {new_rule}, position: {position}")
         extra_query_param = f"position={kwargs['position']}"
-        if kwargs.get("dryrun",False) == True:
+        if kwargs.get("dryrun",True) == False:
             scm_obj_manager.configure.post_entries(scope_param, new_rule, obj.SecurityRule, extra_query_params=extra_query_param)
 
     if action == "update":
@@ -104,7 +122,7 @@ def patch_rule(action, **kwargs):
             rulenames = list(set(rule_names) - set (rule_exclude))
             logger.info("Excluding rules")
             logger.info (f"Total Rules - {len(rule_names)} - Excluded Rules {len(rule_exclude)} - Affected rules {len(rulenames)}")
-
+       
         for rule in current_rules:
             if filter != "":
 
@@ -143,7 +161,7 @@ def patch_rule(action, **kwargs):
                     logger.info(f"new value: {json.dumps(rule,indent=4)}")
 
                     ## remark next line if you want to testing
-                    if kwargs.get("dryrun",False) == True:
+                    if kwargs.get("dryrun",True) == False:
                         scm_obj_manager.api_handler.put(endpoint,rule)
                 else:
                     logger.info(f"Object value already match object:{kwargs['object']} current value: {rule[kwargs['object']]} new value: {kwargs['object_value']} - skipping")
@@ -158,7 +176,7 @@ def patch_rule(action, **kwargs):
                 logger.info(f"Found rule to be deleted - name {rule['name']} - id {rule['id']}")
                 endpoint = f"/sse/config/v1/security-rules/{rule['id']}?position={position}{scope_param}"
                 logger.info(f"Endpoint : {endpoint}")
-                if kwargs.get("dryrun",False) == True:
+                if kwargs.get("dryrun",True) == False:
                     scm_obj_manager.api_handler.delete(endpoint)
 
     if action == "user_format":
@@ -198,7 +216,7 @@ def patch_rule(action, **kwargs):
                 # rule[kwargs['object']] = kwargs['object_value']
                 logger.info(f"new value: {json.dumps(rule,indent=4)}")
                 logger.info(f"endpoint {endpoint}")
-                if kwargs.get("dryrun",False) == True:
+                if kwargs.get("dryrun",True) == False:
                     scm_obj_manager.api_handler.put(endpoint,rule)
 
  
@@ -321,10 +339,10 @@ def patch(dryrun=True):
     # Example 4 - Update application to web-browsing and ssl for all rules  
     # patch_rule("update",object="application",object_value=["web-browsing","ssl"],position="pre", rulenames=["all-rules"])
     """
-
-    #source_hip = ['OCBC-Default-HIP-Profile']
-    # patch_rule("update",object="source_hip",object_value=source_hip,position="post", rulenames=['all-rules'], fix_logging = True, dryrun=dryrun)
-
+    logger.info ("Running Patch")
+    source_hip = ['OCBC-Default-HIP-Profile']
+    patch_rule("update",object="source_hip",object_value=source_hip,position="post", rulenames=['Ping test for Gateway'], fix_logging = True, dryrun=dryrun)
+    logger.info ("Finish Patch")
     
     # replicate("scm-post-rules-2024-12-18_17-50-24.json", position="post")
     # replicate("test-china.json", position="post")
@@ -354,7 +372,7 @@ if __name__ == "__main__":
     backup_parsers.add_argument('-o', dest='folder', action='store', help="Backup folder", default='./')
 
     patcher_parser = subparsers.add_parser('patch', help="patch SCM Config")
-    patcher_parser.add_argument('-nd',dest='nodryrun',help="Dry Run", action='store_true', default=True)
+    patcher_parser.add_argument('-nd',dest='nodryrun',help="Dry Run", action='store_true', default=False)
     
     replicate_parser = subparsers.add_parser('replicate', help="replicate SCM Config")
     replicate_parser.add_argument('-f', '--file', action='store', default='scm-rule.json')
@@ -371,7 +389,7 @@ if __name__ == "__main__":
         backup(folder=args.folder,format=args.format)
 
     if args.command == 'patch':
-        patch(dryrun=args.dryrun)
+        patch(dryrun=not args.nodryrun)
 
     if args.command == 'replicate':
         replicate(dryrun=args.dryrun, input_file=args.file, position=args.position)
