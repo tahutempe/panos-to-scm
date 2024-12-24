@@ -358,6 +358,10 @@ def replicate(dryrun=True, input_file='input.json', position='post'):
     """
     Replicate SCM json rule
     This only replicate rules that are already exists in the system
+    To run replicate, you need:
+    1. Make a backup config of the source tenant
+    2. Update config.yml to point to the target tenant
+    3. Execute
     """
     logger.info("Running replicate")
     logger.info(f"Input file: {input_file}, Position: {position}")
