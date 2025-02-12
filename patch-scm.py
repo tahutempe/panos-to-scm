@@ -14,7 +14,10 @@ import gjson
 import dictdiffer
 import pandas
 import ssl
-
+import copy
+import difflib
+import itertools
+from typing import List, Tuple, Iterator
 
 ## Temporary setup to ignore SSL warning
 try:
@@ -31,8 +34,6 @@ scope_param = ""
 
 # https://github.com/PaloAltoNetworks/panos-to-scm
 
-# sample command to run:
-# python patch-scm.py 2>&1 | tee cn-removehip1.txt
 
 def setup_logging():
     logger = logging.getLogger('')
@@ -101,7 +102,7 @@ def patch_rule(action, **kwargs):
         current_rules = current_rules_pre
     if kwargs['position'] == 'post':
         current_rules = current_rules_post
-
+    # print (current_rules)
     if action == "add":
         new_rule  = kwargs['rule'] 
         position = kwargs['position']
@@ -124,6 +125,7 @@ def patch_rule(action, **kwargs):
             logger.info (f"Total Rules - {len(rule_names)} - Excluded Rules {len(rule_exclude)} - Affected rules {len(rulenames)}")
        
         for rule in current_rules:
+            old_rule = copy.deepcopy(rule)
             if filter != "":
 
                 filter_field = filter.keys()[0]
@@ -149,23 +151,45 @@ def patch_rule(action, **kwargs):
                 # delete profile group
                 
                 logger.info(f"endpoint {endpoint}")
-                if rule[kwargs['object']] !=  kwargs['object_value']:
-                    logger.info(f"Object value not match object:{kwargs['object']} current value: {rule[kwargs['object']]} new value: {kwargs['object_value']} - Updating")
-                    logger.info(f"Updating rule - {rule['name']} ")
-                    if kwargs.get("object",'') != '':
-                        rule[kwargs['object']] = kwargs['object_value']
-                    if kwargs.get('fix_logging',False) == True:
-                        rule['log_start'] = False
-                        rule['log_end'] = True
-                        rule['log_setting'] = 'Cortex Data Lake'
-                    logger.info(f"new value: {json.dumps(rule,indent=4)}")
+                
+                objects = kwargs.get('objects',{})
+                # objects_value = kwargs.get('objects_value',[])
+                
+                rule_update = False
 
-                    ## remark next line if you want to testing
-                    if kwargs.get("dryrun",True) == False:
-                        scm_obj_manager.api_handler.put(endpoint,rule)
-                else:
-                    logger.info(f"Object value already match object:{kwargs['object']} current value: {rule[kwargs['object']]} new value: {kwargs['object_value']} - skipping")
-                    logger.info(f"Object value already match - skipping")
+                if len(objects) >=1:
+                    for index,object_key in enumerate(objects):
+                        object_value = objects[object_key]
+
+                        if rule[object_key] !=  object_value:
+                            logger.info(f"Object value not match object:{object_key} current value: {rule[object_key]} new value: {object_value} - Updating")
+                            rule[object_key] = object_value
+                            rule_update = True
+                        else:
+                            logger.info(f"Object value already match object:{object_key} current value: {rule[object_key]} new value: {object_value} - skipping")
+                            logger.info(f"Object value already match - skipping")
+
+                    if rule_update:
+                        logger.info(f"Updating rule - {rule['name']} ")
+                        
+                        if kwargs.get('fix_logging',False) == True:
+                            rule['log_start'] = False
+                            rule['log_end'] = True
+                            rule['log_setting'] = 'Cortex Data Lake'
+
+                        old_value_text = json.dumps(old_rule, indent=4).splitlines(keepends=True)
+                        new_value_text = json.dumps(rule, indent=4).splitlines(keepends=True)
+                        # table = tabulate([[old_value_text, new_value_text]], headers=['Old Value', 'New Value'], tablefmt='orgtbl')
+                        table = Sdiffer().dump_sdiff(old_value_text, new_value_text)
+                        logger.info(f"Comparison: \n{table}")
+
+                        ## remark next line if you want to testing
+                        if kwargs.get("dryrun",True) == False and rule_update:
+                            scm_obj_manager.api_handler.put(endpoint,rule)
+                        else:
+                            logger.info(f'Skipping update, dryrun: {kwargs.get("dryrun",True)}')
+                
+
                 
 
     if action == "delete":
@@ -318,37 +342,82 @@ def backup(format='json', folder='./'):
             for res in result1:
                 df = pandas.DataFrame(result1[res])
                 df.to_excel(writer, sheet_name=res[:31])
-    
 
-def patch(dryrun=True):
-    """
-    Patch SCM Config
-    Examples:
+class Sdiffer:
+    def __init__(self, max_width:int = 80):
+        # Two columns with a gutter
+        self._col_width = (max_width - 3) // 2
+        assert self._col_width > 0
+        
+    def _fit(self, s: str) -> str:
+        s = s.rstrip()[:self._col_width]
+        return  f"{s: <{self._col_width}}"
 
-    ## Predefined rule names
-    # ['all-rules-allow'] => all allow rules
-    # ['all-rules'] => all rules
-    # ['all-rules-deny'] => all deny rules
+    def sdiff(self, a: List[str], b: List[str]) -> Iterator[str]:
+        diff_lines = difflib.Differ().compare(a, b)
+        diff_table: List[Tuple[str, List[str], List[str]]] = []
+        diff_table.append((" ",[">>>> Old Value <<<<"],[">>>> New Value <<<<"]))
+        for diff_type, line_group in itertools.groupby(diff_lines, key=lambda ln: ln[:1]):
+            lines = [ln[2:] for ln in line_group]
+            if diff_type == " ":
+                diff_table.append((" ", lines, lines))
+            else:
+                if not diff_table or diff_table[-1][0] != "|":
+                    diff_table.append(("\33[31m"+"<>"+"\033[0m", [], []))
+                if diff_type == "-":
+                    # Lines only in `a`
+                    diff_table[-1][1].extend(lines)
+                elif diff_type == "+":
+                    # Lines only in `b`
+                    diff_table[-1][2].extend(lines)
+
+        for diff_type, cell_a, cell_b in diff_table:
+            for left, right in itertools.zip_longest(cell_a, cell_b, fillvalue=""):
+                yield f"{self._fit(left)} {diff_type} {self._fit(right)}"
     
-    # Example 1 - Update source_hip field to "any" for all rules. 
-    # source_hip = ['any']
-    # patch_rule("update",object="source_hip",object_value=source_hip,position="post", rulenames=['all-rules'], fix_logging = True)
-    
-    # Example 2 - Update set rule policy-158 to disable.
-    # disabled = True
-    # patch_rule("update",object="disabled",object_value=disabled,position="post", rulenames=['policy-158'], fix_logging = True)
-     
-    # Example 3 - Update all enabled rules to disable 
-    # disabled = True
-    # enabled_rules = read_file("remove-hip.txt")
-    # patch_rule("update",object="disabled",object_value=disabled,position="post", rule_exclude=enabled_rules, fix_logging = True)
-    
-    # Example 4 - Update application to web-browsing and ssl for all rules  
-    # patch_rule("update",object="application",object_value=["web-browsing","ssl"],position="pre", rulenames=["all-rules"])
+    def dump_sdiff(self, a: List[str], b: List[str]) -> Iterator[str]:
+        return "\n".join(self.sdiff(a, b))
+
+def process_input(objects_str, objects_value_str):
+
+    # objects_str='["service","to","description"]'
+    # objects_value_str = '[["service-http"],["untrust"],"hello123"]'
+
+    objects = eval(objects_str)
+    objects_value  = eval(objects_value_str)
+    a = {}
+    if len(objects) != len(objects_value):
+        logger.error ("Length of Object and object value are not same")
+
+    for index,object in enumerate(objects):
+        a[objects[index]] = objects_value[index]
+
+    return a
+
+def patch(dryrun=True, objects_str='', objects_value_str='', rules='', rule_file='', position='post'):
     """
+    Patch SCM Rules
+    """
+
+    rules_to_update = []
+    if len(rule_file) > 1:
+        rules_to_update = read_file(rule_file)
+
+    if len(rules) > 1:
+        rules_to_update = eval(rules)
+    
+    if len(rules_to_update) < 1:
+        logger.error("Rules or rule file name must be provided")
+        sys.exit(1)
+
     logger.info ("Running Patch")
     source_hip = ['OCBC-Default-HIP-Profile']
-    patch_rule("update",object="source_hip",object_value=source_hip,position="post", rulenames=['Ping test for Gateway'], fix_logging = True, dryrun=dryrun)
+
+    objects = process_input(objects_str, objects_value_str)
+    
+    patch_rule("update",objects=objects, position=position, rulenames=rules, fix_logging = True, dryrun=dryrun)
+    # patch_rule("update",objects="source_hip",object_value=source_hip, position=position, rulenames=rules, fix_logging = True, dryrun=dryrun)
+
     logger.info ("Finish Patch")
     
     # replicate("scm-post-rules-2024-12-18_17-50-24.json", position="post")
@@ -365,7 +434,7 @@ def replicate(dryrun=True, input_file='input.json', position='post'):
     """
     logger.info("Running replicate")
     logger.info(f"Input file: {input_file}, Position: {position}")
-    do_replicate(input_file, position=position)
+    do_replicate(input_file, position=position, dryrun=dryrun)
     logger.info ("Finish replicate")
 
 if __name__ == "__main__":
@@ -382,13 +451,18 @@ if __name__ == "__main__":
     backup_parsers.add_argument('-f', dest='format', choices=['json','xlsx'], help="Backup Output format", default='json')
     backup_parsers.add_argument('-o', dest='folder', action='store', help="Backup folder", default='./')
 
-    patcher_parser = subparsers.add_parser('patch', help="patch SCM Config")
+    patcher_parser = subparsers.add_parser('patch', help="patch SCM Rule Config")
     patcher_parser.add_argument('-nd',dest='nodryrun',help="Dry Run", action='store_true', default=False)
-    
+    patcher_parser.add_argument('--objects',dest='objects',help="Field objects to be replaced", action='store', default='')
+    patcher_parser.add_argument('--values',dest='values',help="Objects values", action='store', default='')
+    patcher_parser.add_argument('--rules',dest='rules',help="Rules to be update, or use one of these - all-rules, all-rules-allow, all-rules-deny", action='store', default='')
+    patcher_parser.add_argument('--rule_file',dest='rule_file',help="Rule file name", action='store', default='')
+    patcher_parser.add_argument('-p', '--position', choices=['pre','post'], default='post')
+
     replicate_parser = subparsers.add_parser('replicate', help="replicate SCM Config")
     replicate_parser.add_argument('-f', '--file', action='store', default='scm-rule.json')
     replicate_parser.add_argument('-p', '--position', choices=['pre','post'], default='post')
-    replicate_parser.add_argument('-nd',dest='nodryrun',help="Dry Run", action='store_true', default=False)
+    replicate_parser.add_argument('-nd',dest='nodryrun',help="No Dry Run", action='store_true', default=False)
 
     args = parser.parse_args() 
 
@@ -401,7 +475,7 @@ if __name__ == "__main__":
         backup(folder=args.folder,format=args.format)
 
     if args.command == 'patch':
-        patch(dryrun=not args.nodryrun)
+        patch(dryrun=not args.nodryrun, objects_str=args.objects, objects_value_str=args.values, rules=args.rules, rule_file=args.rule_file, position=args.position)
 
     if args.command == 'replicate':
         replicate(dryrun=not args.nodryrun, input_file=args.file, position=args.position)
